@@ -60,11 +60,11 @@ export async function exportPDF(pages, filename = 'leus-scan.pdf') {
 /**
  * Export a single canvas/dataUrl as a JPEG image and trigger download.
  */
-export function exportImage(dataUrl, filename = 'leus-scan.jpg', type = 'jpeg') {
+export async function exportImage(dataUrl, filename = 'leus-scan.jpg', type = 'jpeg') {
   const ext  = type === 'png' ? 'png' : 'jpg';
   const mime = type === 'png' ? 'image/png' : 'image/jpeg';
   const link = document.createElement('a');
-  link.href     = toMime(dataUrl, mime);
+  link.href     = await toMime(dataUrl, mime);
   link.download = filename.replace(/\.(jpg|jpeg|png)$/i, '') + '.' + ext;
   link.click();
 }
@@ -92,13 +92,17 @@ function getImageSize(dataUrl) {
 /** Re-encode a dataUrl to a specific MIME type (canvas round-trip) */
 function toMime(dataUrl, mime) {
   if (dataUrl.startsWith(`data:${mime}`)) return dataUrl;
-  const img    = new Image();
-  img.src      = dataUrl;
-  const canvas = document.createElement('canvas');
-  canvas.width  = img.naturalWidth  || 1;
-  canvas.height = img.naturalHeight || 1;
-  canvas.getContext('2d').drawImage(img, 0, 0);
-  return canvas.toDataURL(mime, 0.92);
+  return new Promise((resolve) => {
+    const img  = new Image();
+    img.onload = () => {
+      const canvas  = document.createElement('canvas');
+      canvas.width  = img.naturalWidth  || 1;
+      canvas.height = img.naturalHeight || 1;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      resolve(canvas.toDataURL(mime, 0.92));
+    };
+    img.src = dataUrl;
+  });
 }
 
 /**

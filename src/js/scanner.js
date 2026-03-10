@@ -61,7 +61,6 @@ export function detectDocumentCorners(source) {
     const gray = new cv.Mat();
     const blur = new cv.Mat();
     const edge = new cv.Mat();
-    const k    = new cv.Mat();
     const contours   = new cv.MatVector();
     const hierarchy  = new cv.Mat();
 
@@ -70,7 +69,6 @@ export function detectDocumentCorners(source) {
     cv.Canny(blur, edge, 75, 200);
 
     // Dilate slightly to close gaps
-    k.delete();
     const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
     cv.dilate(edge, edge, kernel);
     kernel.delete();
@@ -315,23 +313,15 @@ function dist(a, b) {
 
 /**
  * Order 4 points as [TL, TR, BR, BL].
- * Uses sum / diff trick: TL has min sum, BR has max sum.
+ * Uses sum / diff trick: TL has min sum, BR has max sum,
+ * TR has min diff (x-y), BL has max diff.
  */
 export function orderCorners(pts) {
-  const sorted = [...pts].sort((a, b) => (a.x + a.y) - (b.x + b.y));
-  const tl = sorted[0];
-  const br = sorted[3];
-  const remaining = [sorted[1], sorted[2]];
-  remaining.sort((a, b) => a.x - b.x);
-  const [bl, tr] = remaining[0].x < remaining[1].x
-    ? [remaining[0], remaining[1]]
-    : [remaining[1], remaining[0]];
-  // Re-order: smallest x+y = TL, then clockwise
   const bySumDiff = [...pts];
-  bySumDiff.sort((a,b) => (a.x+a.y)-(b.x+b.y));
+  bySumDiff.sort((a, b) => (a.x + a.y) - (b.x + b.y));
   const TL = bySumDiff[0], BR = bySumDiff[3];
   const rest = [bySumDiff[1], bySumDiff[2]];
-  rest.sort((a,b) => (a.x-a.y)-(b.x-b.y));
+  rest.sort((a, b) => (a.x - a.y) - (b.x - b.y));
   const TR = rest[0], BL = rest[1];
   return [TL, TR, BR, BL];
 }

@@ -571,7 +571,7 @@ function wireEvents() {
   document.getElementById('review-auto-btn').addEventListener('click', () => {
     // Re-run auto detection on current raw canvas
     if (!App.session.rawCanvas) return;
-    const { detectDocumentCorners: detect, fullImageCorners: full, orderCorners: order }
+    const { detectDocumentCorners: detect, fullImageCorners: full }
       = window.LeusScanner;
     const corners = detect(App.session.rawCanvas)
       || full(App.session.rawCanvas.width, App.session.rawCanvas.height);
