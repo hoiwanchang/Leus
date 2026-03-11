@@ -66,10 +66,11 @@ export function detectDocumentCorners(source) {
 
     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
     cv.GaussianBlur(gray, blur, new cv.Size(5, 5), 0);
-    cv.Canny(blur, edge, 75, 200);
+    cv.Canny(blur, edge, 30, 120);
 
-    // Dilate slightly to close gaps
+    // Close gaps, then strengthen edge continuity
     const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+    cv.morphologyEx(edge, edge, cv.MORPH_CLOSE, kernel);
     cv.dilate(edge, edge, kernel);
     kernel.delete();
 
@@ -77,24 +78,26 @@ export function detectDocumentCorners(source) {
 
     let bestPoly    = null;
     let bestArea    = 0;
-    const minArea   = src.rows * src.cols * 0.05; // at least 5% of image
+    const minArea   = src.rows * src.cols * 0.02; // at least 2% of image
 
     for (let i = 0; i < contours.size(); i++) {
       const c    = contours.get(i);
       const peri = cv.arcLength(c, true);
-      const approx = new cv.Mat();
-      cv.approxPolyDP(c, approx, 0.02 * peri, true);
-
-      if (approx.rows === 4) {
-        const area = Math.abs(cv.contourArea(approx));
-        if (area > bestArea && area > minArea) {
-          bestArea = area;
-          bestPoly = approx;
+      for (const ratio of [0.015, 0.02, 0.03, 0.04]) {
+        const approx = new cv.Mat();
+        cv.approxPolyDP(c, approx, ratio * peri, true);
+        if (approx.rows === 4 && cv.isContourConvex(approx)) {
+          const area = Math.abs(cv.contourArea(approx));
+          if (area > bestArea && area > minArea) {
+            if (bestPoly) bestPoly.delete();
+            bestArea = area;
+            bestPoly = approx;
+          } else {
+            approx.delete();
+          }
         } else {
           approx.delete();
         }
-      } else {
-        approx.delete();
       }
       c.delete();
     }

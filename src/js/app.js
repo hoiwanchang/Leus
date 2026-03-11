@@ -148,10 +148,11 @@ function openReviewScreen(canvas, corners) {
     cropCanvas.style.width  = dispW + 'px';
     cropCanvas.style.height = dispH + 'px';
 
-    // Position SVG over canvas
-    const rect = cropCanvas.getBoundingClientRect();
-    cropSVG.style.left   = rect.left   + 'px';
-    cropSVG.style.top    = rect.top    + 'px';
+    // Position SVG over canvas (relative to crop-wrap)
+    const left = Math.max(0, (wW - dispW) / 2);
+    const top  = Math.max(0, (wH - dispH) / 2);
+    cropSVG.style.left   = left + 'px';
+    cropSVG.style.top    = top + 'px';
     cropSVG.style.width  = dispW + 'px';
     cropSVG.style.height = dispH + 'px';
 
