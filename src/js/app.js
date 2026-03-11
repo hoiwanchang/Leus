@@ -128,9 +128,23 @@ const cropState = {
   imgH:      0,
 };
 
+function normalizeReviewCorners(canvas, corners) {
+  const valid = Array.isArray(corners)
+    && corners.length === 4
+    && corners.every(p => Number.isFinite(p?.x) && Number.isFinite(p?.y));
+  const base = valid
+    ? orderCorners(corners)
+    : fullImageCorners(canvas.width, canvas.height);
+  return base.map(p => ({
+    x: Math.max(0, Math.min(canvas.width, p.x)),
+    y: Math.max(0, Math.min(canvas.height, p.y)),
+  }));
+}
+
 function openReviewScreen(canvas, corners) {
+  const normalizedCorners = normalizeReviewCorners(canvas, corners);
   App.session.rawCanvas  = canvas;
-  App.session.rawCorners = corners;
+  App.session.rawCorners = normalizedCorners;
 
   const cropCanvas = document.getElementById('crop-canvas');
   const cropSVG    = document.getElementById('crop-svg');
@@ -138,23 +152,31 @@ function openReviewScreen(canvas, corners) {
   cropCanvas.height = canvas.height;
   cropCanvas.getContext('2d').drawImage(canvas, 0, 0);
 
-  // Fit canvas into container
-  requestAnimationFrame(() => {
+  showScreen('review-screen');
+
+  const layoutCropOverlay = (attempt = 0) => {
     const wrap = document.getElementById('crop-wrap');
     const { clientWidth: wW, clientHeight: wH } = wrap;
-    const scale  = Math.min(wW / canvas.width, wH / canvas.height, 1);
+    if ((!wW || !wH) && attempt < 4) {
+      requestAnimationFrame(() => layoutCropOverlay(attempt + 1));
+      return;
+    }
+    const safeW = wW || canvas.width;
+    const safeH = wH || canvas.height;
+    const scale  = Math.min(safeW / canvas.width, safeH / canvas.height, 1);
     const dispW  = Math.round(canvas.width  * scale);
     const dispH  = Math.round(canvas.height * scale);
     cropCanvas.style.width  = dispW + 'px';
     cropCanvas.style.height = dispH + 'px';
 
     // Position SVG over canvas (relative to crop-wrap)
-    const left = Math.max(0, (wW - dispW) / 2);
-    const top  = Math.max(0, (wH - dispH) / 2);
+    const left = Math.max(0, (safeW - dispW) / 2);
+    const top  = Math.max(0, (safeH - dispH) / 2);
     cropSVG.style.left   = left + 'px';
     cropSVG.style.top    = top + 'px';
     cropSVG.style.width  = dispW + 'px';
     cropSVG.style.height = dispH + 'px';
+    cropSVG.setAttribute('viewBox', `0 0 ${dispW} ${dispH}`);
 
     cropState.scale   = scale;
     cropState.offsetX = 0;
@@ -163,14 +185,13 @@ function openReviewScreen(canvas, corners) {
     cropState.imgH    = canvas.height;
 
     // Convert image-space corners to display-space
-    cropState.corners = corners.map(p => ({
+    cropState.corners = normalizedCorners.map(p => ({
       x: p.x * scale,
       y: p.y * scale,
     }));
     updateCropHandles();
-  });
-
-  showScreen('review-screen');
+  };
+  requestAnimationFrame(() => layoutCropOverlay());
 }
 
 function updateCropHandles() {
