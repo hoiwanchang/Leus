@@ -66,44 +66,66 @@ export function detectDocumentCorners(source) {
 
     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
     cv.GaussianBlur(gray, blur, new cv.Size(5, 5), 0);
-    cv.Canny(blur, edge, 30, 120);
+    cv.Canny(blur, edge, 20, 100);
 
     // Close gaps, then strengthen edge continuity
     const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
     cv.morphologyEx(edge, edge, cv.MORPH_CLOSE, kernel);
-    cv.dilate(edge, edge, kernel);
+    cv.dilate(edge, edge, kernel, new cv.Point(-1, -1), 2);
     kernel.delete();
-
-    cv.findContours(edge, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
     let bestPoly    = null;
     let bestArea    = 0;
     // Keep sensitivity high enough for farther/smaller documents while
     // still rejecting tiny noise contours.
-    const minArea   = src.rows * src.cols * 0.02; // at least 2% of image
+    const minArea   = src.rows * src.cols * 0.008; // at least 0.8% of image
 
-    for (let i = 0; i < contours.size(); i++) {
-      const c    = contours.get(i);
-      const peri = cv.arcLength(c, true);
-      for (const ratio of [0.015, 0.02, 0.03, 0.04]) {
-        const approx = new cv.Mat();
-        cv.approxPolyDP(c, approx, ratio * peri, true);
-        if (approx.rows === 4 && cv.isContourConvex(approx)) {
-          const area = Math.abs(cv.contourArea(approx));
-          if (area > bestArea && area > minArea) {
-            if (bestPoly) bestPoly.delete();
-            bestArea = area;
-            bestPoly = approx;
-            break;
+    const findBestQuad = (binaryMat) => {
+      cv.findContours(binaryMat, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      for (let i = 0; i < contours.size(); i++) {
+        const c    = contours.get(i);
+        const peri = cv.arcLength(c, true);
+        for (const ratio of [0.01, 0.015, 0.02, 0.03, 0.04]) {
+          const approx = new cv.Mat();
+          cv.approxPolyDP(c, approx, ratio * peri, true);
+          if (approx.rows === 4 && cv.isContourConvex(approx)) {
+            const area = Math.abs(cv.contourArea(approx));
+            if (area > bestArea && area > minArea) {
+              if (bestPoly) bestPoly.delete();
+              bestArea = area;
+              bestPoly = approx;
+              break;
+            } else {
+              approx.delete();
+            }
           } else {
             approx.delete();
           }
-        } else {
-          approx.delete();
         }
+        c.delete();
+        if (bestArea >= src.rows * src.cols * 0.85) break;
       }
-      c.delete();
-      if (bestArea >= src.rows * src.cols * 0.85) break;
+    };
+
+    findBestQuad(edge);
+
+    if (!bestPoly) {
+      // Fallback pass: adaptive threshold handles low-contrast edges better.
+      const adapt = new cv.Mat();
+      const adaptKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+      cv.adaptiveThreshold(
+        blur,
+        adapt,
+        255,
+        cv.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv.THRESH_BINARY,
+        21,
+        8
+      );
+      cv.morphologyEx(adapt, adapt, cv.MORPH_CLOSE, adaptKernel);
+      findBestQuad(adapt);
+      adaptKernel.delete();
+      adapt.delete();
     }
 
     // Cleanup
