@@ -44,7 +44,7 @@ Then open [http://localhost:3000](http://localhost:3000) in your browser.
 
 Leus is a static web app. Deploy the entire repository to any static hosting:
 
-- **GitHub Pages** — push to a `gh-pages` branch
+- **GitHub Pages** — automatic deploy via GitHub Actions (on push to `master`)
 - **Netlify / Vercel** — drag & drop or connect the repo
 - **Any web server** — just `serve .`
 
