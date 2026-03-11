@@ -1,0 +1,20 @@
+{
+  "name": "leus",
+  "version": "1.0.0",
+  "description": "A free, open-source, local-first document scanner web app — replacement for Microsoft Lens",
+  "keywords": [
+    "document-scanner",
+    "ocr",
+    "pdf",
+    "pwa",
+    "lens"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "dev": "npx serve . -p 3000 --no-clipboard",
+    "start": "npx serve . -p 8080 --no-clipboard"
+  },
+  "devDependencies": {
+    "serve": "^14.2.6"
+  }
+}
