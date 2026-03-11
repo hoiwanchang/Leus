@@ -8,7 +8,14 @@
  *  - Loading sequence (OpenCV + app init)
  */
 
-import { loadOpenCv, perspectiveWarp, fullImageCorners, orderCorners } from './scanner.js';
+import {
+  loadOpenCv,
+  loadDocSegModel,
+  detectDocumentCornersHybrid,
+  perspectiveWarp,
+  fullImageCorners,
+  orderCorners,
+} from './scanner.js';
 import { applyFilter }    from './filters.js';
 import { initOCR, recognizeText } from './ocr.js';
 import { exportPDF, exportImage, canvasToDataUrl } from './export.js';
@@ -38,6 +45,7 @@ const App = {
     pageIndex:   0,
   },
   currentDocId:  null,              // for detail screen
+  captureInFlight: false,
 };
 
 /* ════════════════════════════════════════════════════════════
@@ -50,6 +58,13 @@ async function boot() {
   loadOpenCv((pct, msg) => {
     if (pct < 100) setLoadingStatus(msg || 'Loading engine…', 10 + Math.round(pct * 0.5));
   }).catch(() => console.warn('OpenCV unavailable — using JS fallback'));
+
+  // Optional small segmentation model (non-blocking, with graceful fallback)
+  loadDocSegModel((pct, msg) => {
+    if (pct < 100) setLoadingStatus(msg || 'Loading doc model…', 35 + Math.round(pct * 0.25));
+  }).catch(() => {
+    // Silent fallback: OpenCV path remains available.
+  });
 
   setLoadingStatus('Loading OCR…', 20);
   // Pre-warm OCR in background (don't wait for it)
@@ -535,6 +550,28 @@ async function handleSearch(query) {
   renderDocGrid(results);
 }
 
+async function requestCapture(trigger = 'manual') {
+  if (App.captureInFlight) return;
+  if (App.currentScreen !== 'camera-screen') return;
+
+  App.captureInFlight = true;
+  try {
+    const captured = captureFrame();
+    if (!captured) {
+      if (trigger === 'manual') showToast('Camera not ready', 'error');
+      return;
+    }
+
+    const modelCorners = await detectDocumentCornersHybrid(captured.canvas);
+    if (modelCorners) captured.corners = modelCorners;
+    openReviewScreen(captured.canvas, captured.corners);
+
+    if (trigger === 'auto') showToast('Auto captured', 'success');
+  } finally {
+    App.captureInFlight = false;
+  }
+}
+
 /* ════════════════════════════════════════════════════════════
    EVENT WIRING
 ═══════════════════════════════════════════════════════════════ */
@@ -551,9 +588,11 @@ function wireEvents() {
 
   /* ── Camera screen ──────────────────────────────── */
   document.getElementById('capture-btn').addEventListener('click', () => {
-    const captured = captureFrame();
-    if (!captured) { showToast('Camera not ready', 'error'); return; }
-    openReviewScreen(captured.canvas, captured.corners);
+    requestCapture('manual');
+  });
+
+  document.addEventListener('leus:auto-capture', () => {
+    requestCapture('auto');
   });
 
   document.getElementById('flip-camera-btn').addEventListener('click', flipCamera);
@@ -590,13 +629,11 @@ function wireEvents() {
     showScreen('camera-screen');
   });
 
-  document.getElementById('review-auto-btn').addEventListener('click', () => {
+  document.getElementById('review-auto-btn').addEventListener('click', async () => {
     // Re-run auto detection on current raw canvas
     if (!App.session.rawCanvas) return;
-    const { detectDocumentCorners: detect, fullImageCorners: full }
-      = window.LeusScanner;
-    const corners = detect(App.session.rawCanvas)
-      || full(App.session.rawCanvas.width, App.session.rawCanvas.height);
+    const corners = await detectDocumentCornersHybrid(App.session.rawCanvas)
+      || fullImageCorners(App.session.rawCanvas.width, App.session.rawCanvas.height);
     openReviewScreen(App.session.rawCanvas, corners);
   });
 

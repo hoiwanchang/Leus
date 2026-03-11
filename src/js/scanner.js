@@ -15,6 +15,16 @@ let _cvReady   = false;
 let _cvLoading = false;
 const _cvWaiters = [];
 
+/* ── Optional ONNX doc segmentation loader ─────────────────── */
+let _ortReady = false;
+let _ortLoading = false;
+let _ortError = null;
+let _docSession = null;
+let _docInputName = 'input';
+
+const DOC_MODEL_PATH = 'models/docseg-small.onnx';
+const DOC_MODEL_SIZE = 256;
+
 export function isOpenCvReady() { return _cvReady; }
 
 export function loadOpenCv(onProgress) {
@@ -45,6 +55,82 @@ export function loadOpenCv(onProgress) {
     };
     document.head.appendChild(script);
   });
+}
+
+export function isDocSegReady() {
+  return _ortReady && !!_docSession;
+}
+
+export async function loadDocSegModel(onProgress) {
+  if (_docSession) {
+    _ortReady = true;
+    return;
+  }
+  if (_ortLoading) return;
+
+  _ortLoading = true;
+  _ortError = null;
+  try {
+    const ort = await ensureOrtLoaded(onProgress);
+    const modelResponse = await fetch(DOC_MODEL_PATH, { cache: 'force-cache' });
+    if (!modelResponse.ok) throw new Error(`Model not found: ${DOC_MODEL_PATH}`);
+    const modelData = await modelResponse.arrayBuffer();
+    _docSession = await ort.InferenceSession.create(modelData, {
+      executionProviders: ['wasm'],
+      graphOptimizationLevel: 'all',
+    });
+    _docInputName = _docSession.inputNames[0] || 'input';
+    _ortReady = true;
+    onProgress && onProgress(100, 'Doc model ready');
+  } catch (err) {
+    _ortReady = false;
+    _ortError = err;
+    console.warn('Doc segmentation model unavailable, using OpenCV fallback:', err);
+  } finally {
+    _ortLoading = false;
+  }
+}
+
+export async function detectDocumentCornersHybrid(source) {
+  const modelCorners = await detectDocumentCornersByModel(source);
+  if (modelCorners) return modelCorners;
+  return detectDocumentCorners(source);
+}
+
+export async function detectDocumentCornersByModel(source) {
+  if (!isDocSegReady()) return null;
+  try {
+    const srcCanvas = sourceToCanvas(source);
+    if (!srcCanvas) return null;
+
+    const modelCanvas = document.createElement('canvas');
+    modelCanvas.width = DOC_MODEL_SIZE;
+    modelCanvas.height = DOC_MODEL_SIZE;
+    const mctx = modelCanvas.getContext('2d', { willReadFrequently: true });
+    mctx.drawImage(srcCanvas, 0, 0, DOC_MODEL_SIZE, DOC_MODEL_SIZE);
+
+    const input = canvasToNchwTensor(modelCanvas);
+    const outputs = await _docSession.run({ [_docInputName]: input });
+    const outputName = _docSession.outputNames[0];
+    const outTensor = outputs[outputName];
+    const mask = tensorToMask(outTensor);
+    if (!mask) return null;
+
+    const quad = quadFromMask(mask.data, mask.width, mask.height);
+    if (!quad) return null;
+
+    const sx = srcCanvas.width / mask.width;
+    const sy = srcCanvas.height / mask.height;
+    const scaled = quad.map(p => ({
+      x: Math.max(0, Math.min(srcCanvas.width - 1, p.x * sx)),
+      y: Math.max(0, Math.min(srcCanvas.height - 1, p.y * sy)),
+    }));
+
+    return orderCorners(scaled);
+  } catch (err) {
+    console.warn('Doc model detect error, fallback to OpenCV:', err);
+    return null;
+  }
 }
 
 /* ── Document detection (OpenCV) ────────────────────────────── */
@@ -144,6 +230,145 @@ export function detectDocumentCorners(source) {
     console.warn('OpenCV detection error:', err);
     return null;
   }
+}
+
+async function ensureOrtLoaded(onProgress) {
+  if (window.ort && window.ort.InferenceSession) {
+    _ortReady = true;
+    return window.ort;
+  }
+
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-ort="1"]');
+    if (existing) {
+      const done = () => {
+        if (window.ort && window.ort.InferenceSession) {
+          _ortReady = true;
+          resolve(window.ort);
+        } else {
+          reject(new Error('ONNX Runtime loaded but unavailable'));
+        }
+      };
+      existing.addEventListener('load', done, { once: true });
+      existing.addEventListener('error', reject, { once: true });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.dataset.ort = '1';
+    script.async = true;
+    script.src = 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js';
+    script.onload = () => {
+      if (window.ort && window.ort.InferenceSession) {
+        _ortReady = true;
+        onProgress && onProgress(70, 'ONNX runtime ready');
+        resolve(window.ort);
+      } else {
+        reject(new Error('ONNX Runtime script loaded but window.ort missing'));
+      }
+    };
+    script.onerror = () => reject(new Error('Failed to load ONNX Runtime'));
+    document.head.appendChild(script);
+  });
+}
+
+function sourceToCanvas(source) {
+  if (source instanceof HTMLCanvasElement) return source;
+  if (source instanceof HTMLImageElement || source instanceof HTMLVideoElement) {
+    const width = source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth;
+    const height = source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight;
+    if (!width || !height) return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext('2d').drawImage(source, 0, 0, width, height);
+    return canvas;
+  }
+  return null;
+}
+
+function canvasToNchwTensor(canvas) {
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const chw = new Float32Array(3 * width * height);
+  const stride = width * height;
+
+  for (let i = 0; i < width * height; i++) {
+    const r = data[i * 4] / 255;
+    const g = data[i * 4 + 1] / 255;
+    const b = data[i * 4 + 2] / 255;
+    chw[i] = r;
+    chw[stride + i] = g;
+    chw[stride * 2 + i] = b;
+  }
+
+  return new window.ort.Tensor('float32', chw, [1, 3, height, width]);
+}
+
+function tensorToMask(tensor) {
+  if (!tensor || !tensor.data || !Array.isArray(tensor.dims)) return null;
+  const { data, dims } = tensor;
+
+  // Common outputs: [1,1,H,W] logits/probabilities or [1,H,W,1].
+  if (dims.length === 4 && dims[1] === 1) {
+    const h = dims[2], w = dims[3];
+    return { data: toProbability(data), width: w, height: h };
+  }
+  if (dims.length === 4 && dims[3] === 1) {
+    const h = dims[1], w = dims[2];
+    const out = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        out[y * w + x] = data[((y * w + x) * 1)];
+      }
+    }
+    return { data: toProbability(out), width: w, height: h };
+  }
+  return null;
+}
+
+function toProbability(arr) {
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = 0; i < arr.length; i++) {
+    if (arr[i] < min) min = arr[i];
+    if (arr[i] > max) max = arr[i];
+  }
+  // If values are already in [0,1], keep them. Otherwise sigmoid.
+  if (min >= 0 && max <= 1) return arr;
+  const out = new Float32Array(arr.length);
+  for (let i = 0; i < arr.length; i++) {
+    out[i] = 1 / (1 + Math.exp(-arr[i]));
+  }
+  return out;
+}
+
+function quadFromMask(mask, width, height, threshold = 0.5) {
+  let area = 0;
+  let tl = null, tr = null, br = null, bl = null;
+  let bestTL = Infinity;
+  let bestTR = -Infinity;
+  let bestBR = -Infinity;
+  let bestBL = -Infinity;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const v = mask[y * width + x];
+      if (v < threshold) continue;
+      area++;
+
+      const s = x + y;
+      const d = x - y;
+      if (s < bestTL) { bestTL = s; tl = { x, y }; }
+      if (d > bestTR) { bestTR = d; tr = { x, y }; }
+      if (s > bestBR) { bestBR = s; br = { x, y }; }
+      if (-d > bestBL) { bestBL = -d; bl = { x, y }; }
+    }
+  }
+
+  if (!tl || !tr || !br || !bl) return null;
+  if (area < width * height * 0.04) return null;
+  return [tl, tr, br, bl];
 }
 
 /* ── Perspective correction ─────────────────────────────────── */
@@ -343,14 +568,16 @@ function dist(a, b) {
 /**
  * Order 4 points as [TL, TR, BR, BL].
  * Uses sum / diff trick: TL has min sum, BR has max sum,
- * TR has min diff (x-y), BL has max diff.
+ * TR has min diff (y-x), BL has max diff.
  */
 export function orderCorners(pts) {
   const bySumDiff = [...pts];
   bySumDiff.sort((a, b) => (a.x + a.y) - (b.x + b.y));
   const TL = bySumDiff[0], BR = bySumDiff[3];
   const rest = [bySumDiff[1], bySumDiff[2]];
-  rest.sort((a, b) => (a.x - a.y) - (b.x - b.y));
+  // In image coordinates (y grows downward), using (y - x)
+  // correctly separates TR and BL to avoid mirrored warps.
+  rest.sort((a, b) => (a.y - a.x) - (b.y - b.x));
   const TR = rest[0], BL = rest[1];
   return [TL, TR, BR, BL];
 }
@@ -398,7 +625,11 @@ export function drawDetectionOverlay(canvas, corners, color = '#4ecca3') {
 window.LeusScanner = {
   loadOpenCv,
   isOpenCvReady,
+  loadDocSegModel,
+  isDocSegReady,
   detectDocumentCorners,
+  detectDocumentCornersByModel,
+  detectDocumentCornersHybrid,
   perspectiveWarp,
   orderCorners,
   fullImageCorners,

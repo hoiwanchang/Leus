@@ -75,16 +75,33 @@ Leus is a static web app. Deploy the entire repository to any static hosting:
 | Library | Purpose | Size |
 |---|---|---|
 | [OpenCV.js 4.8](https://opencv.org/) | Document edge detection, perspective warp | ~9 MB (cached) |
+| [ONNX Runtime Web](https://onnxruntime.ai/docs/get-started/with-javascript/web.html) | Optional document segmentation model inference | runtime ~1 MB + model |
 | [Tesseract.js 5](https://tesseract.projectnaptha.com/) | On-device OCR | ~12 MB worker + models |
 | [jsPDF 2.5](https://parall.ax/products/jspdf) | PDF generation | ~250 KB |
 
 All libraries run **client-side only** — no data is sent to any server.
+
+### Optional: stronger edge detection model
+
+Leus now supports an optional ONNX segmentation model before OpenCV fallback.
+
+1. Put a model file at [models/docseg-small.onnx](models/docseg-small.onnx)
+2. The app will auto-load it at startup
+3. If model load/inference fails, Leus automatically falls back to OpenCV
+
+Recommended model output format:
+
+- Input: `[1, 3, 256, 256]` float32 RGB (0..1)
+- Output: `[1, 1, H, W]` or `[1, H, W, 1]` mask logits/probabilities
+
+This keeps offline capability while improving hard scenes (complex background, shadows, weak page edges).
 
 ---
 
 ## 📱 Usage
 
 1. **Scan** — Open the app → point camera at a document → tap the white button
+	- Keep the phone steady for a moment to trigger auto-capture lock
 2. **Adjust** — Drag the green corner handles to fit the document edges, then tap **Crop & Continue**
 3. **Filter** — Choose a filter (Document for B&W text, Whiteboard for boards, etc.)
 4. **OCR** — Tap **Text** to extract text from the scan
