@@ -78,6 +78,8 @@ export function detectDocumentCorners(source) {
 
     let bestPoly    = null;
     let bestArea    = 0;
+    // Keep sensitivity high enough for farther/smaller documents while
+    // still rejecting tiny noise contours.
     const minArea   = src.rows * src.cols * 0.02; // at least 2% of image
 
     for (let i = 0; i < contours.size(); i++) {
@@ -101,6 +103,7 @@ export function detectDocumentCorners(source) {
         }
       }
       c.delete();
+      if (bestArea >= src.rows * src.cols * 0.85) break;
     }
 
     // Cleanup
