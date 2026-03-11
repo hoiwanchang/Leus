@@ -92,6 +92,7 @@ export function detectDocumentCorners(source) {
             if (bestPoly) bestPoly.delete();
             bestArea = area;
             bestPoly = approx;
+            break;
           } else {
             approx.delete();
           }
